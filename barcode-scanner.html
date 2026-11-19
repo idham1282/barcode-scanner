@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Scan">
+<title>Barcode Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{--bg:#f3f4f2;--surface:#fff;--ink:#1b2a33;--muted:#62727c;--line:#d8dedb;--accent:#0b6e4f;--on-accent:#fff;--warn:#b3261e;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10181d;--surface:#18242b;--ink:#e9efec;--muted:#93a4ac;--line:#2a3a43;--accent:#3ecf9a;--on-accent:#06251b;--warn:#ff8a80}}
+:root[data-theme="dark"]{--bg:#10181d;--surface:#18242b;--ink:#e9efec;--muted:#93a4ac;--line:#2a3a43;--accent:#3ecf9a;--on-accent:#06251b;--warn:#ff8a80}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:1.25rem;margin:4px 0 14px;font-weight:700}
+.cam{background:#000;border-radius:14px;overflow:hidden;min-height:220px;position:relative;display:flex;align-items:center;justify-content:center}
+.cam .hint{color:#c9d3d8;font-size:.95rem;padding:24px;text-align:center}
+#reader{width:100%}
+#reader video{width:100%!important;display:block}
+button{font:inherit;border:0;border-radius:12px;padding:14px 18px;font-weight:600;cursor:pointer;min-height:48px}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.primary{background:var(--accent);color:var(--on-accent);width:100%;margin-top:12px;font-size:1.05rem}
+.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+.row{display:flex;gap:8px;margin-top:8px}
+.row>*{flex:1}
+.result{background:var(--surface);border:1.5px solid var(--line);border-radius:14px;padding:14px;margin-top:14px}
+.result small{color:var(--muted)}
+.code{font-size:1.5rem;font-weight:700;word-break:break-all;margin:4px 0 10px;font-variant-numeric:tabular-nums}
+.manual{display:flex;gap:8px;margin-top:14px}
+input{flex:1;font:inherit;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);min-width:0}
+.hist-head{display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px}
+.hist-head h2{font-size:1rem;margin:0}
+ul{list-style:none;margin:0;padding:0}
+li{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+li .c{word-break:break-all;font-weight:600}
+li .t{color:var(--muted);font-size:.8rem}
+li button{padding:8px 12px;min-height:40px;font-size:.85rem}
+.empty{color:var(--muted);padding:8px 2px}
+.err{color:var(--warn);margin-top:10px;font-size:.92rem}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:.9rem;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.on{opacity:1}
+.flash{animation:fl .5s}
+@keyframes fl{from{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent)}to{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.flash{animation:none}.toast{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Barcode Scanner</h1>
+
+  <div class="cam"><div id="reader"></div><div class="hint" id="hint">Tap Start scanning, then point the camera at a barcode or QR code.</div></div>
+  <button class="primary" id="toggle">Start scanning</button>
+  <div class="err" id="err" role="alert"></div>
+
+  <div class="result" id="result" hidden>
+    <small>Last scan</small>
+    <div class="code" id="last"></div>
+    <div class="row">
+      <button class="ghost" id="copy">Copy</button>
+      <button class="ghost" id="search">Search web</button>
+    </div>
+  </div>
+
+  <form class="manual" id="manual" onsubmit="return false">
+    <input id="typed" inputmode="text" placeholder="Or type a code" aria-label="Type a code">
+    <button class="ghost" id="add" type="button">Add</button>
+  </form>
+
+  <div class="hist-head">
+    <h2>History</h2>
+    <div style="display:flex;gap:6px">
+      <button class="ghost" id="copyAll" style="padding:8px 12px;min-height:40px;font-size:.85rem">Copy all</button>
+      <button class="ghost" id="clear" style="padding:8px 12px;min-height:40px;font-size:.85rem">Clear</button>
+    </div>
+  </div>
+  <ul id="list"></ul>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  var KEY="bn-scan-history-v1";
+  var history=[];
+  try{history=JSON.parse(localStorage.getItem(KEY)||"[]");}catch(e){history=[];}
+  var $=function(id){return document.getElementById(id)};
+  var scanner=null,running=false,lastCode="",lastTime=0;
+
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(history.slice(0,200)));}catch(e){}}
+  function toast(m){var t=$("toast");t.textContent=m;t.className="toast on";setTimeout(function(){t.className="toast"},1500);}
+  function fmt(ts){var d=new Date(ts);return d.toLocaleDateString()+" "+d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});}
+
+  function copyText(txt){
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(function(){toast("Copied")},function(){fallbackCopy(txt)});
+    } else fallbackCopy(txt);
+  }
+  function fallbackCopy(txt){
+    var a=document.createElement("textarea");a.value=txt;document.body.appendChild(a);a.select();
+    try{document.execCommand("copy");toast("Copied");}catch(e){toast("Copy not available");}
+    document.body.removeChild(a);
+  }
+
+  function render(){
+    var ul=$("list");ul.innerHTML="";
+    if(!history.length){var p=document.createElement("div");p.className="empty";p.textContent="No scans yet. Scanned codes appear here.";ul.appendChild(p);return;}
+    history.forEach(function(h,i){
+      var li=document.createElement("li");
+      var left=document.createElement("div");
+      var c=document.createElement("div");c.className="c";c.textContent=h.code;
+      var t=document.createElement("div");t.className="t";t.textContent=fmt(h.ts)+(h.fmt?" · "+h.fmt:"");
+      left.appendChild(c);left.appendChild(t);
+      var b=document.createElement("button");b.className="ghost";b.textContent="Copy";
+      b.onclick=function(){copyText(h.code)};
+      li.appendChild(left);li.appendChild(b);ul.appendChild(li);
+    });
+  }
+
+  function addCode(code,format){
+    code=String(code||"").trim();if(!code)return;
+    history.unshift({code:code,ts:Date.now(),fmt:format||"manual"});
+    save();render();
+    $("result").hidden=false;$("last").textContent=code;
+    var r=$("result");r.classList.remove("flash");void r.offsetWidth;r.classList.add("flash");
+    $("last").dataset.code=code;
+  }
+
+  function beep(){
+    try{
+      var C=window.AudioContext||window.webkitAudioContext;var ctx=new C();
+      var o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=880;g.gain.value=.15;
+      o.connect(g);g.connect(ctx.destination);o.start();setTimeout(function(){o.stop();ctx.close()},120);
+    }catch(e){}
+    if(navigator.vibrate)navigator.vibrate(80);
+  }
+
+  function onScan(text,result){
+    var now=Date.now();
+    if(text===lastCode&&now-lastTime<2500){lastTime=now;return;}
+    lastCode=text;lastTime=now;
+    var f="";try{f=result&&result.result&&result.result.format&&result.result.format.formatName||"";}catch(e){}
+    beep();addCode(text,f);
+  }
+
+  function setRunning(on){
+    running=on;
+    $("toggle").textContent=on?"Stop scanning":"Start scanning";
+    $("hint").style.display=on?"none":"block";
+  }
+
+  function start(){
+    $("err").textContent="";
+    if(typeof Html5Qrcode==="undefined"){$("err").textContent="Scanner failed to load. Check your internet connection and reload.";return;}
+    if(!scanner)scanner=new Html5Qrcode("reader",{experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+    scanner.start(
+      {facingMode:"environment"},
+      {fps:10,qrbox:function(w,h){var s=Math.min(w,h);return {width:Math.floor(w*0.85),height:Math.floor(Math.min(s*0.55,160))};}},
+      onScan,function(){}
+    ).then(function(){setRunning(true);}).catch(function(e){
+      setRunning(false);
+      $("err").textContent="Camera could not start. Allow camera access in your browser settings, and open this page directly in Safari (iPhone) or Chrome (Android), not inside another app.";
+    });
+  }
+  function stop(){
+    if(!scanner){setRunning(false);return;}
+    scanner.stop().then(function(){scanner.clear();setRunning(false);}).catch(function(){setRunning(false);});
+  }
+
+  $("toggle").onclick=function(){running?stop():start();};
+  $("copy").onclick=function(){copyText($("last").dataset.code||"")};
+  $("search").onclick=function(){var c=$("last").dataset.code;if(c)window.open("https://www.google.com/search?q="+encodeURIComponent(c),"_blank");};
+  $("add").onclick=function(){var v=$("typed").value;if(v.trim()){addCode(v,"manual");$("typed").value="";}};
+  $("typed").addEventListener("keydown",function(e){if(e.key==="Enter"){$("add").click();}});
+  $("copyAll").onclick=function(){if(!history.length){toast("Nothing to copy");return;}copyText(history.map(function(h){return h.code}).join("\n"));};
+  $("clear").onclick=function(){if(!history.length)return;if(confirm("Clear all scan history?")){history=[];save();render();$("result").hidden=true;}};
+
+  render();
+})();
+</script>
+</body>
+</html>
